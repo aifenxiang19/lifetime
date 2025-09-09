@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lifetime</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --fg:#e7eef7; --muted:#a9b3c1; --accent:#7cc4ff; --ok:#34d399; --err:#f87171;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: radial-gradient(1200px 800px at 50% -10%, #152233 15%, #0c121a 60%, var(--bg));
+      color:var(--fg); display:grid; place-items:center;
+    }
+    .center{width: min(780px, 92vw);}
+
+    /* —— Logo —— */
+    .logo{
+      user-select:none; cursor:pointer; text-align:center;
+      font-weight:800; font-size: clamp(36px, 8vw, 76px);
+      letter-spacing:0.02em; line-height:1;
+      background:linear-gradient(135deg,#fff, #b8e1ff 35%, #7cc4ff 60%, #8ef0d6);
+      -webkit-background-clip:text; background-clip:text; color:transparent;
+      filter: drop-shadow(0 8px 30px rgba(124,196,255,.25));
+      transition: transform .25s ease, filter .25s ease;
+    }
+    .logo:hover{ transform: translateY(-2px) scale(1.02); filter: drop-shadow(0 12px 36px rgba(124,196,255,.33)); }
+
+    /* —— 密码面板 —— */
+    .panel{ width:100%; margin-top: 26px; overflow:hidden; }
+    .panel-inner{
+      max-width:520px; margin:0 auto; padding:16px; border-radius:16px;
+      background: rgba(255,255,255,0.03); backdrop-filter: blur(8px);
+      border:1px solid rgba(255,255,255,0.06);
+      transform: translateY(-8px); opacity:0; height:0; pointer-events:none;
+      transition: opacity .45s ease, transform .45s ease, height .45s ease;
+    }
+    .panel.show .panel-inner{ opacity:1; transform: translateY(0); height: 96px; pointer-events:auto; }
+
+    .row{ display:flex; gap:12px; align-items:center; }
+    input[type="password"]{
+      flex:1; height:48px; border-radius:12px; border:1px solid rgba(255,255,255,0.12);
+      background:#0e151e; color:var(--fg); padding:0 14px; font-size:16px;
+      outline:none; transition: border-color .2s ease, box-shadow .2s ease;
+    }
+    input[type="password"]:focus{ border-color:#7cc4ff55; box-shadow:0 0 0 6px rgba(124,196,255,.08); }
+    .hint{ margin-top:10px; color:var(--muted); font-size:13px; min-height:1.2em; }
+    .hint.err{ color:var(--err); }
+    .hint.ok{ color:var(--ok); }
+
+    /* —— 文档页 —— */
+    #doc{ display:none; opacity:0; transform: translateY(8px); transition: opacity .4s ease, transform .4s ease; }
+    #doc.show{ display:block; opacity:1; transform: translateY(0); }
+    .doc-card{
+      background:#0f1722; padding:22px; border-radius:18px; border:1px solid rgba(255,255,255,.06);
+      box-shadow: 0 12px 40px rgba(0,0,0,.35);
+    }
+    h2{margin:0 0 14px 0; font-size:24px}
+    p{margin:0 0 10px 0; color:#d7e1ee}
+    a{ color:#9bd1ff; text-decoration: none; border-bottom:1px dashed #275b80 }
+    a:hover{ border-bottom-style: solid }
+
+    /* 小小的“晃动”动画用于错误 */
+    @keyframes shake {10%, 90% {transform: translateX(-1px);} 20%, 80% {transform: translateX(2px);} 30%, 50%, 70% {transform: translateX(-4px);} 40%, 60% {transform: translateX(4px);} }
+    .shake{ animation: shake .45s both; }
+  </style>
+</head>
+<body>
+  <main class="center">
+    <!-- LOGO：第一次点击展开密码；输入密码后再次点击进入 -->
+    <div id="logo" class="logo" aria-label="Lifetime 进入">Lifetime</div>
+
+    <section id="panel" class="panel" aria-live="polite">
+      <div class="panel-inner">
+        <div class="row">
+          <input id="pwd" type="password" inputmode="text" autocomplete="current-password" placeholder="输入密码…" aria-label="密码" />
+        </div>
+        <div id="hint" class="hint">点击上面的“Lifetime”LOGO 展开/进入</div>
+      </div>
+    </section>
+
+    <section id="doc" tabindex="-1">
+      <div class="doc-card">
+        <h2>文档页面</h2>
+        <p>🎉 认证成功！这里是你的文档内容占位。把你要展示的文本、图片或链接放在这里即可。</p>
+        <ul>
+          <li><a href="#">示例链接 A</a></li>
+          <li><a href="#">示例链接 B</a></li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <script>
+  // =============================
+  //  简易前端密码门（PBKDF2 校验）
+  //  ⚠️ 注意：前端口令仅用于“挡人眼”，并非真正安全的访问控制。
+  //  演示口令：Lifetime@2025
+  //  如需更换口令，请看底部的 generateHash() 说明。
+  // =============================
+
+  // —— 存放在前端的派生参数（可替换） ——
+  const PBKDF2_ITERATIONS = 120000;
+  const SALT_B64 = 'A2yj2keFZDZf0e44woe6NQ==';
+  const HASH_B64 = 'h4spXxH7LaP7454kLp9v7DqKMRWXK2doE9BplzdmMDA='; // 目标派生值（32字节）
+
+  const $ = (sel) => document.querySelector(sel);
+  const logo = $('#logo');
+  const panel = $('#panel');
+  const panelInner = panel.querySelector('.panel-inner');
+  const pwd = $('#pwd');
+  const hint = $('#hint');
+  const doc = $('#doc');
+
+  // 记住一次会话（刷新仍有效，关闭标签页后失效）
+  const SESSION_KEY = 'lifetime_auth_ok';
+  if (sessionStorage.getItem(SESSION_KEY) === '1') showDoc();
+
+  let revealed = false; // 是否已展开输入框
+
+  logo.addEventListener('click', async () => {
+    if (!revealed) {
+      revealPanel();
+      return;
+    }
+    // 第二次点击：如果已展开，则尝试校验口令
+    await tryLogin();
+  });
+
+  // 允许在输入框中按 Enter 也触发校验（可选）
+  pwd.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      tryLogin();
+    }
+  });
+
+  function revealPanel(){
+    revealed = true;
+    panel.classList.add('show');
+    panelInner.classList.add('show');
+    setTimeout(() => pwd.focus(), 320);
+  }
+
+  async function tryLogin(){
+    const pass = pwd.value || '';
+    if (!pass) {
+      flashHint('请输入密码');
+      panelInner.classList.add('shake');
+      setTimeout(()=>panelInner.classList.remove('shake'), 480);
+      return;
+    }
+    setLoading(true);
+    try{
+      const ok = await verifyPassword(pass, PBKDF2_ITERATIONS, SALT_B64, HASH_B64);
+      if (ok) {
+        hint.textContent = '验证成功，正在进入…';
+        hint.className = 'hint ok';
+        sessionStorage.setItem(SESSION_KEY, '1');
+        setTimeout(showDoc, 220);
+      } else {
+        flashHint('密码不正确，请重试', true);
+        panelInner.classList.add('shake');
+        setTimeout(()=>panelInner.classList.remove('shake'), 480);
+      }
+    } catch(err){
+      console.error(err);
+      flashHint('浏览器不支持 Web Crypto，请更换现代浏览器', true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function setLoading(loading){
+    logo.style.pointerEvents = loading ? 'none' : 'auto';
+    pwd.disabled = !!loading;
+  }
+
+  function flashHint(text, isErr){
+    hint.textContent = text;
+    hint.className = 'hint' + (isErr ? ' err' : '');
+  }
+
+  function showDoc(){
+    // 隐藏登录区
+    panel.style.display = 'none';
+    logo.style.display = 'none';
+    // 显示文档
+    doc.classList.add('show');
+    doc.focus();
+  }
+
+  // —— 密码校验：PBKDF2-SHA-256 与固定盐 ——
+  async function verifyPassword(password, iterations, saltB64, expectedHashB64){
+    const enc = new TextEncoder();
+    const salt = base64ToArrayBuffer(saltB64);
+    const expected = base64ToArrayBuffer(expectedHashB64);
+
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw', enc.encode(password), {name:'PBKDF2'}, false, ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+      {name:'PBKDF2', hash:'SHA-256', salt, iterations}, keyMaterial, 256
+    );
+    const derived = new Uint8Array(bits);
+    return constantTimeEqual(derived, new Uint8Array(expected));
+  }
+
+  // —— 工具：常量时间比较，Base64 ↔ ArrayBuffer ——
+  function constantTimeEqual(a, b){
+    if (a.length !== b.length) return false;
+    let diff = 0; for (let i=0;i<a.length;i++){ diff |= a[i] ^ b[i]; }
+    return diff === 0;
+  }
+  function base64ToArrayBuffer(b64){
+    const bin = atob(b64); const len = bin.length; const bytes = new Uint8Array(len);
+    for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  // —— 可选：在控制台生成新口令的盐与哈希（方便你替换上面的常量） ——
+  // 使用方法：打开此页面 → F12 打开控制台 → 运行：
+  //   generateHash('你的新口令')
+  // 然后把打印的 iterations/salt/hash 覆盖到顶部常量中。
+  window.generateHash = async function(pw, iterations = 120000){
+    const enc = new TextEncoder();
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pw), {name:'PBKDF2'}, false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt, iterations}, keyMaterial, 256);
+    const hashB64 = btoa(String.fromCharCode(...new Uint8Array(bits)));
+    const saltB64 = btoa(String.fromCharCode(...salt));
+    console.log({iterations, salt: saltB64, hash: hashB64});
+    return {iterations, salt: saltB64, hash: hashB64};
+  }
+  </script>
+</body>
+</html>
