@@ -4,4 +4,5 @@
 密码：Lifetime@2025
 
 
-其它版本 由ChatGPT、Gemini制作。
+# 其它版本 由ChatGPT、Gemini制作。
+CF D1
